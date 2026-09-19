@@ -22,7 +22,7 @@ export function TickerTape() {
           <span key={`${s.symbol}-${i}`} className="flex items-center gap-2 font-mono text-sm whitespace-nowrap">
             <span className="text-muted-foreground">{s.symbol}</span>
             <span className="font-semibold text-foreground">
-              {latest[s.symbol] !== undefined ? formatPrice(s.symbol, latest[s.symbol]) : "—"}
+              {latest[s.symbol] !== undefined ? formatPrice(s.symbol, latest[s.symbol]!) : "—"}
             </span>
           </span>
         ))}

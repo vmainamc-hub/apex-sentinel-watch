@@ -63,10 +63,6 @@ export function BotPanel() {
         if (open.ticksLeft <= 0) {
           const won = open.direction === "rise" ? t.quote > open.entry : t.quote < open.entry;
           const tie = t.quote === open.entry;
-          const profit = tie ? 0 : won ? 0 : 0; // placeholder replaced below
-          const pnl = tie ? 0 : won ? 0 : 0;
-          void profit;
-          void pnl;
           const stakeUsed = tradesStakeRef.current;
           const finalPnl = tie ? 0 : won ? stakeUsed * PAYOUT : -stakeUsed;
           if (won && !tie) setWins((w) => w + 1);
