@@ -12,13 +12,14 @@ export const SYMBOLS = [
 type TickHandler = (tick: Tick) => void;
 
 type Pending = {
-  resolve: (value: unknown) => void;
+  resolve: (value: Record<string, unknown>) => void;
   reject: (err: Error) => void;
 };
 
 /**
  * Minimal Deriv WebSocket API client (browser only).
- * Uses the public demo app id for unauthenticated market data.
+ * Unauthenticated app ids cannot stream ticks, so live prices are
+ * polled from ticks_history every 2 seconds.
  */
 class DerivClient {
   private ws: WebSocket | null = null;
@@ -26,6 +27,8 @@ class DerivClient {
   private reqId = 0;
   private pending = new Map<number, Pending>();
   private handlers = new Map<string, Set<TickHandler>>();
+  private pollers = new Map<string, ReturnType<typeof setInterval>>();
+  private lastTick = new Map<string, Tick>();
 
   private connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
@@ -36,10 +39,6 @@ class DerivClient {
       this.ws = ws;
       ws.onopen = () => {
         this.opening = null;
-        // resubscribe existing symbols after reconnect
-        for (const symbol of this.handlers.keys()) {
-          this.send({ ticks: symbol, subscribe: 1 });
-        }
         resolve();
       };
       ws.onerror = () => {
@@ -49,9 +48,6 @@ class DerivClient {
       ws.onclose = () => {
         this.ws = null;
         this.opening = null;
-        if (this.handlers.size > 0) {
-          setTimeout(() => void this.connect().catch(() => undefined), 2000);
-        }
       };
       ws.onmessage = (event) => this.onMessage(event);
     });
@@ -76,13 +72,6 @@ class DerivClient {
         p.resolve(data);
       }
     }
-    if (data["msg_type"] === "tick") {
-      const tick = data["tick"] as { symbol: string; epoch: number; quote: number };
-      const set = this.handlers.get(tick.symbol);
-      if (set) {
-        for (const h of set) h({ epoch: tick.epoch, quote: tick.quote });
-      }
-    }
   }
 
   private send(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -92,10 +81,7 @@ class DerivClient {
         return;
       }
       const id = ++this.reqId;
-      this.pending.set(id, {
-        resolve: resolve as (v: unknown) => void,
-        reject,
-      });
+      this.pending.set(id, { resolve, reject });
       this.ws.send(JSON.stringify({ ...payload, req_id: id }));
     });
   }
@@ -114,16 +100,31 @@ class DerivClient {
     return history.times.map((t, i) => ({ epoch: t, quote: history.prices[i]! }));
   }
 
+  private async poll(symbol: string) {
+    try {
+      const ticks = await this.history(symbol, 1);
+      const tick = ticks[0];
+      if (!tick) return;
+      const prev = this.lastTick.get(symbol);
+      if (prev && prev.epoch === tick.epoch) return;
+      this.lastTick.set(symbol, tick);
+      const set = this.handlers.get(symbol);
+      if (set) for (const h of set) h(tick);
+    } catch {
+      // reconnect happens on next poll via connect()
+    }
+  }
+
   subscribe(symbol: string, handler: TickHandler): () => void {
     let set = this.handlers.get(symbol);
     if (!set) {
       set = new Set();
       this.handlers.set(symbol, set);
+      const interval = setInterval(() => void this.poll(symbol), 2000);
+      this.pollers.set(symbol, interval);
+      void this.poll(symbol);
     }
     set.add(handler);
-    void this.connect()
-      .then(() => this.send({ ticks: symbol, subscribe: 1 }))
-      .catch(() => undefined);
 
     return () => {
       const s = this.handlers.get(symbol);
@@ -131,10 +132,10 @@ class DerivClient {
       s.delete(handler);
       if (s.size === 0) {
         this.handlers.delete(symbol);
-        void this.send({ forget_all: "ticks" }).catch(() => undefined);
-        for (const sym of this.handlers.keys()) {
-          void this.send({ ticks: sym, subscribe: 1 }).catch(() => undefined);
-        }
+        const interval = this.pollers.get(symbol);
+        if (interval) clearInterval(interval);
+        this.pollers.delete(symbol);
+        this.lastTick.delete(symbol);
       }
     };
   }
@@ -143,6 +144,6 @@ class DerivClient {
 export const deriv = new DerivClient();
 
 export function formatPrice(symbol: string, quote: number): string {
-  const decimals = symbol === "R_10" || symbol === "R_25" ? 3 : symbol.startsWith("1HZ") ? 2 : 2;
+  const decimals = symbol === "R_10" || symbol === "R_25" ? 3 : 2;
   return quote.toFixed(decimals);
 }
