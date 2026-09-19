@@ -65,18 +65,19 @@ class DerivClient {
     } catch {
       return;
     }
-    const reqId = data.req_id as number | undefined;
+    const reqId = data["req_id"] as number | undefined;
     if (reqId !== undefined && this.pending.has(reqId)) {
       const p = this.pending.get(reqId)!;
       this.pending.delete(reqId);
-      if (data.error) {
-        p.reject(new Error((data.error as { message?: string }).message ?? "API error"));
+      const err = data["error"] as { message?: string } | undefined;
+      if (err) {
+        p.reject(new Error(err.message ?? "API error"));
       } else {
         p.resolve(data);
       }
     }
-    if (data.msg_type === "tick") {
-      const tick = data.tick as { symbol: string; epoch: number; quote: number };
+    if (data["msg_type"] === "tick") {
+      const tick = data["tick"] as { symbol: string; epoch: number; quote: number };
       const set = this.handlers.get(tick.symbol);
       if (set) {
         for (const h of set) h({ epoch: tick.epoch, quote: tick.quote });
@@ -109,8 +110,8 @@ class DerivClient {
       start: 1,
       style: "ticks",
     });
-    const history = res.history as { prices: number[]; times: number[] };
-    return history.times.map((t, i) => ({ epoch: t, quote: history.prices[i] }));
+    const history = res["history"] as { prices: number[]; times: number[] };
+    return history.times.map((t, i) => ({ epoch: t, quote: history.prices[i]! }));
   }
 
   subscribe(symbol: string, handler: TickHandler): () => void {
